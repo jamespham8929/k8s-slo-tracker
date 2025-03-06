@@ -1,0 +1,44 @@
+services:
+  - name: checkout-api
+    namespace: payments
+    slos:
+      - name: availability
+        type: availability
+        target: 0.999
+        window: 30d
+        good_query: |
+          sum(rate(http_requests_total{service="checkout-api",code=~"2.."}[5m]))
+        total_query: |
+          sum(rate(http_requests_total{service="checkout-api"}[5m]))
+
+      - name: latency-p99
+        type: latency
+        target: 0.95
+        window: 30d
+        threshold_ms: 300
+        query: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service="checkout-api"}[5m])) by (le))
+
+  - name: search-api
+    namespace: discovery
+    slos:
+      - name: availability
+        type: availability
+        target: 0.995
+        window: 30d
+        good_query: |
+          sum(rate(http_requests_total{service="search-api",code=~"2.."}[5m]))
+        total_query: |
+          sum(rate(http_requests_total{service="search-api"}[5m]))
+
+  - name: notification-service
+    namespace: comms
+    slos:
+      - name: availability
+        type: availability
+        target: 0.99
+        window: 30d
+        good_query: |
+          sum(rate(grpc_server_handled_total{service="notification-service",grpc_code="OK"}[5m]))
+        total_query: |
+          sum(rate(grpc_server_handled_total{service="notification-service"}[5m]))
