@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import yaml
 from .models import SLODefinition, SLOType
+from .adaptive import DEFAULT_LADDER
 
-# Multi-window burn rate thresholds from Google SRE workbook
+# Derived from the engine's ladder so the generated Prometheus rules and the live
+# AdaptiveBurnRateEngine can never disagree about thresholds. The ladder itself is
+# the Google SRE workbook multi-window, multi-burn-rate set.
 ALERT_WINDOWS = [
-    {"severity": "critical", "long_window": "1h",  "short_window": "5m",  "burn_rate": 14.4},
-    {"severity": "critical", "long_window": "6h",  "short_window": "30m", "burn_rate": 6.0},
-    {"severity": "warning",  "long_window": "3d",  "short_window": "6h",  "burn_rate": 1.0},
+    {
+        "severity": tier.severity.value,
+        "long_window": tier.long_window,
+        "short_window": tier.short_window,
+        "burn_rate": tier.burn_rate,
+    }
+    for tier in DEFAULT_LADDER
 ]
 
 

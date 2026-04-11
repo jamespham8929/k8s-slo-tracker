@@ -1,8 +1,17 @@
-"""Multi-window burn rate alerts following the Google SRE workbook approach."""
+"""Multi-window burn rate helpers following the Google SRE workbook approach.
+
+The canonical alert ladder lives in `adaptive.DEFAULT_LADDER`. This module
+re-exposes it in the older `BurnRateWindow` shape for the alert-rule generator
+and keeps the stateless burn-rate math helpers. Keeping a single source of truth
+for the ladder means the generated Prometheus rules and the live engine can never
+disagree about thresholds.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from .adaptive import DEFAULT_LADDER
 
 
 @dataclass
@@ -13,16 +22,16 @@ class BurnRateWindow:
     severity: str
 
 
-# Standard multi-window burn rate pairs from the Google SRE workbook
-# At 99.9% SLO (error budget = 0.1%), these thresholds fire when budget
-# will be exhausted in:
-#   14.4x burn → 50 hours (critical/page)
-#   6.0x  burn → 5 days  (critical/page)
-#   1.0x  burn → 30 days (warning/ticket)
+# Derived from the engine's ladder so the two cannot drift. At a 99.9% SLO these
+# thresholds exhaust the budget in 50 hours (14.4x), 5 days (6.0x), 30 days (1.0x).
 STANDARD_WINDOWS: list[BurnRateWindow] = [
-    BurnRateWindow(long_window="1h",  short_window="5m",  burn_rate_threshold=14.4, severity="critical"),
-    BurnRateWindow(long_window="6h",  short_window="30m", burn_rate_threshold=6.0,  severity="critical"),
-    BurnRateWindow(long_window="3d",  short_window="6h",  burn_rate_threshold=1.0,  severity="warning"),
+    BurnRateWindow(
+        long_window=tier.long_window,
+        short_window=tier.short_window,
+        burn_rate_threshold=tier.burn_rate,
+        severity=tier.severity.value,
+    )
+    for tier in DEFAULT_LADDER
 ]
 
 

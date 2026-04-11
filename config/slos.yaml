@@ -1,3 +1,8 @@
+# Queries use the literal token WINDOW, which the evaluator substitutes per
+# alert window (5m, 30m, 1h, 6h, 1d, 3d). They wrap counters in increase(...) so
+# the tracker receives event COUNTS, not rates. Counts are what make the
+# confidence gating possible (see docs/adr/0002).
+
 services:
   - name: checkout-api
     namespace: payments
@@ -7,17 +12,9 @@ services:
         target: 0.999
         window: 30d
         good_query: |
-          sum(rate(http_requests_total{service="checkout-api",code=~"2.."}[5m]))
+          sum(increase(http_requests_total{service="checkout-api",code=~"2.."}[WINDOW]))
         total_query: |
-          sum(rate(http_requests_total{service="checkout-api"}[5m]))
-
-      - name: latency-p99
-        type: latency
-        target: 0.95
-        window: 30d
-        threshold_ms: 300
-        query: |
-          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{service="checkout-api"}[5m])) by (le))
+          sum(increase(http_requests_total{service="checkout-api"}[WINDOW]))
 
   - name: search-api
     namespace: discovery
@@ -27,10 +24,13 @@ services:
         target: 0.995
         window: 30d
         good_query: |
-          sum(rate(http_requests_total{service="search-api",code=~"2.."}[5m]))
+          sum(increase(http_requests_total{service="search-api",code=~"2.."}[WINDOW]))
         total_query: |
-          sum(rate(http_requests_total{service="search-api"}[5m]))
+          sum(increase(http_requests_total{service="search-api"}[WINDOW]))
 
+  # A deliberately low-traffic service. This is the case the project exists for:
+  # naive alerting either pages on a single error or goes blind. The adaptive
+  # engine keeps coverage and reports insufficient_data when traffic is too thin.
   - name: notification-service
     namespace: comms
     slos:
@@ -39,6 +39,6 @@ services:
         target: 0.99
         window: 30d
         good_query: |
-          sum(rate(grpc_server_handled_total{service="notification-service",grpc_code="OK"}[5m]))
+          sum(increase(grpc_server_handled_total{service="notification-service",grpc_code="OK"}[WINDOW]))
         total_query: |
-          sum(rate(grpc_server_handled_total{service="notification-service"}[5m]))
+          sum(increase(grpc_server_handled_total{service="notification-service"}[WINDOW]))

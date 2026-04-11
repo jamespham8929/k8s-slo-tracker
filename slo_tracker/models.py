@@ -58,9 +58,12 @@ class SLOStatus:
 
     @property
     def alert_severity(self) -> str:
-        if self.burn_rate_1h >= 14.4:
+        # Tolerance avoids a service sitting exactly on a threshold (e.g. a burn
+        # of precisely 14.4x) being misclassified by floating-point rounding.
+        eps = 1e-9
+        if self.burn_rate_1h >= 14.4 - eps:
             return "critical"
-        if self.burn_rate_6h >= 6.0:
+        if self.burn_rate_6h >= 6.0 - eps:
             return "warning"
         return "none"
 
