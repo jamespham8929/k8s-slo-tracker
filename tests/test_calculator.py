@@ -86,8 +86,25 @@ class TestMinutesUntilExhausted:
     def test_returns_positive_minutes_when_burning_fast(self):
         calc = ErrorBudgetCalculator()
         slo = make_slo(target=0.999)
+        # Realistic incident: most of the window budget is still intact
+        # (current_sli high) but a fast burn just started in the last hour.
+        # That is exactly when "minutes until exhausted" is a useful projection.
         fast_burn_sli = 1.0 - (0.001 * 14.4)
-        status = calc.compute_status(slo, current_sli=fast_burn_sli, sli_1h=fast_burn_sli, sli_6h=fast_burn_sli, sli_24h=fast_burn_sli)
+        status = calc.compute_status(
+            slo, current_sli=0.9995, sli_1h=fast_burn_sli,
+            sli_6h=fast_burn_sli, sli_24h=fast_burn_sli,
+        )
         minutes = calc.minutes_until_exhausted(status)
         assert minutes is not None
         assert minutes > 0
+
+    def test_returns_zero_when_budget_already_exhausted(self):
+        calc = ErrorBudgetCalculator()
+        slo = make_slo(target=0.999)
+        # Budget fully consumed already: projection is 0, not a positive number.
+        exhausted_sli = 1.0 - (0.001 * 14.4)
+        status = calc.compute_status(
+            slo, current_sli=exhausted_sli, sli_1h=exhausted_sli,
+            sli_6h=exhausted_sli, sli_24h=exhausted_sli,
+        )
+        assert calc.minutes_until_exhausted(status) == 0.0

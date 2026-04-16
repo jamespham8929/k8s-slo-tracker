@@ -10,8 +10,17 @@ from .models import SLODefinition, SLOType, ServiceSLOConfig
 from .calculator import ErrorBudgetCalculator
 from .prometheus_client import PrometheusClient
 from .alert_generator import AlertRuleGenerator
+from .evaluator import SLOEvaluator
+from .adaptive import Estimator, Severity
 
 console = Console()
+
+_SEVERITY_COLOR = {
+    "critical": "red",
+    "warning": "yellow",
+    "none": "green",
+    "insufficient_data": "dim",
+}
 
 
 def load_config(path: str) -> list[ServiceSLOConfig]:
@@ -88,6 +97,54 @@ def status(config, prometheus):
                 f"{st.error_budget_remaining * 100:.1f}%",
                 f"{st.burn_rate_1h:.2f}x",
                 f"[{color}]{st.alert_severity}[/{color}]",
+            )
+
+    console.print(table)
+
+
+@cli.command()
+@click.option("--config", required=True, help="Path to SLO config YAML")
+@click.option("--prometheus", default="http://localhost:9090", show_default=True)
+@click.option("--confidence", default=0.95, show_default=True, help="Confidence level for burn-rate gating")
+@click.option("--estimator", default="wilson", type=click.Choice(["wilson", "bayesian"]))
+def evaluate(config, prometheus, confidence, estimator):
+    """Evaluate SLOs with the confidence-gated, traffic-adaptive engine.
+
+    Unlike `status`, this path uses event counts and the AdaptiveBurnRateEngine,
+    so it is the one that stays sane on low-traffic services.
+    """
+    services = load_config(config)
+    evaluator = SLOEvaluator(
+        PrometheusClient(prometheus),
+        confidence=confidence,
+        estimator=Estimator(estimator),
+    )
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Service")
+    table.add_column("SLO")
+    table.add_column("Severity")
+    table.add_column("Burn (lower bound)", justify="right")
+    table.add_column("Samples", justify="right")
+    table.add_column("Reason")
+
+    for svc in services:
+        for slo in svc.slos:
+            result = evaluator.evaluate(slo)
+            decision = result.decision
+            color = _SEVERITY_COLOR.get(decision.severity.value, "white")
+
+            fired = next((v for v in decision.verdicts if v.confident_breach), None)
+            burn = f"{fired.lower_bound_burn:.1f}x" if fired else "-"
+            samples = f"{max((v.sample_count for v in decision.verdicts), default=0):.0f}"
+
+            table.add_row(
+                svc.name,
+                slo.name,
+                f"[{color}]{decision.severity.value}[/{color}]",
+                burn,
+                samples,
+                decision.reason,
             )
 
     console.print(table)
