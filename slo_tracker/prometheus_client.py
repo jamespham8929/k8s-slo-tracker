@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+
 import requests
 
 
@@ -13,7 +13,7 @@ class PrometheusClient:
         self._timeout = timeout
         self._session = requests.Session()
 
-    def query(self, promql: str, time: Optional[datetime] = None) -> float | None:
+    def query(self, promql: str, time: datetime | None = None) -> float | None:
         """Run an instant query and return a single scalar result."""
         params: dict = {"query": promql}
         if time:

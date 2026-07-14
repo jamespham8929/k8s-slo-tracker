@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 class SLOType(str, Enum):
@@ -20,10 +19,10 @@ class SLODefinition:
     slo_type: SLOType
     target: float  # 0.0 - 1.0, e.g. 0.999 for 99.9%
     window_days: int
-    good_query: Optional[str] = None
-    total_query: Optional[str] = None
-    latency_query: Optional[str] = None
-    latency_threshold_ms: Optional[float] = None
+    good_query: str | None = None
+    total_query: str | None = None
+    latency_query: str | None = None
+    latency_threshold_ms: float | None = None
 
     @property
     def error_budget_total(self) -> float:

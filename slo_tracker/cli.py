@@ -1,17 +1,18 @@
 """CLI entry point for k8s-slo-tracker."""
 
 import time
-import yaml
+
 import click
+import yaml
 from rich.console import Console
 from rich.table import Table
 
-from .models import SLODefinition, SLOType, ServiceSLOConfig
-from .calculator import ErrorBudgetCalculator
-from .prometheus_client import PrometheusClient
-from .alert_generator import AlertRuleGenerator
-from .evaluator import SLOEvaluator
 from .adaptive import Estimator
+from .alert_generator import AlertRuleGenerator
+from .calculator import ErrorBudgetCalculator
+from .evaluator import SLOEvaluator
+from .models import ServiceSLOConfig, SLODefinition, SLOType
+from .prometheus_client import PrometheusClient
 
 console = Console()
 
@@ -86,8 +87,12 @@ def status(config, prometheus):
             if window_sli is None:
                 continue
 
-            st = calc.compute_status(slo, window_sli, sli_1h or window_sli, sli_6h or window_sli, sli_24h or window_sli)
-            color = {"critical": "red", "warning": "yellow", "none": "green"}.get(st.alert_severity, "white")
+            st = calc.compute_status(
+                slo, window_sli, sli_1h or window_sli, sli_6h or window_sli, sli_24h or window_sli
+            )
+            color = {"critical": "red", "warning": "yellow", "none": "green"}.get(
+                st.alert_severity, "white"
+            )
 
             table.add_row(
                 svc.name,
@@ -105,7 +110,9 @@ def status(config, prometheus):
 @cli.command()
 @click.option("--config", required=True, help="Path to SLO config YAML")
 @click.option("--prometheus", default="http://localhost:9090", show_default=True)
-@click.option("--confidence", default=0.95, show_default=True, help="Confidence level for burn-rate gating")
+@click.option(
+    "--confidence", default=0.95, show_default=True, help="Confidence level for burn-rate gating"
+)
 @click.option("--estimator", default="wilson", type=click.Choice(["wilson", "bayesian"]))
 def evaluate(config, prometheus, confidence, estimator):
     """Evaluate SLOs with the confidence-gated, traffic-adaptive engine.

@@ -104,7 +104,7 @@ class BetaPrior:
         return self.alpha / (self.alpha + self.beta)
 
     @classmethod
-    def from_slo(cls, target: float, strength: float = 5.0) -> "BetaPrior":
+    def from_slo(cls, target: float, strength: float = 5.0) -> BetaPrior:
         """Build a prior centered on the SLO error budget.
 
         `strength` is the prior sample size (alpha + beta). A strength of 5 means

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import yaml
-from .models import SLODefinition, SLOType
+
 from .adaptive import DEFAULT_LADDER
+from .models import SLODefinition, SLOType
 
 # Derived from the engine's ladder so the generated Prometheus rules and the live
 # AdaptiveBurnRateEngine can never disagree about thresholds. The ladder itself is
@@ -46,7 +47,8 @@ class AlertRuleGenerator:
                 "record": f"slo:sli_error:ratio_rate{window}",
                 "expr": (
                     f"1 - (\n"
-                    f"  sum(rate(http_requests_total{{{label_selector},code=~\"2..\"}}[{window}]))\n"
+                    f"  sum(rate(http_requests_total{{{label_selector},"
+                    f"code=~\"2..\"}}[{window}]))\n"
                     f"  /\n"
                     f"  sum(rate(http_requests_total{{{label_selector}}}[{window}]))\n"
                     f")"
@@ -73,9 +75,11 @@ class AlertRuleGenerator:
             rules.append({
                 "alert": f"SLOBurnRate{slo.service.replace('-', '_').title()}",
                 "expr": (
-                    f"slo:sli_error:ratio_rate{long_w}{{service=\"{slo.service}\"}} > {threshold:.6f}\n"
+                    f"slo:sli_error:ratio_rate{long_w}{{service=\"{slo.service}\"}}"
+                    f" > {threshold:.6f}\n"
                     f"and\n"
-                    f"slo:sli_error:ratio_rate{short_w}{{service=\"{slo.service}\"}} > {threshold:.6f}"
+                    f"slo:sli_error:ratio_rate{short_w}{{service=\"{slo.service}\"}}"
+                    f" > {threshold:.6f}"
                 ),
                 "for": "2m",
                 "labels": {
