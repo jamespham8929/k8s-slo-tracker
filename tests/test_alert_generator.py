@@ -1,7 +1,6 @@
 """Tests for Prometheus alert rule generation."""
 
 import yaml
-import pytest
 
 from slo_tracker.alert_generator import AlertRuleGenerator
 from slo_tracker.models import SLODefinition, SLOType

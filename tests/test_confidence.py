@@ -1,6 +1,5 @@
 """Tests for the statistical confidence estimators."""
 
-import math
 
 import pytest
 

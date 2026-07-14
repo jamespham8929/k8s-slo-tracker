@@ -11,7 +11,7 @@ from .calculator import ErrorBudgetCalculator
 from .prometheus_client import PrometheusClient
 from .alert_generator import AlertRuleGenerator
 from .evaluator import SLOEvaluator
-from .adaptive import Estimator, Severity
+from .adaptive import Estimator
 
 console = Console()
 
