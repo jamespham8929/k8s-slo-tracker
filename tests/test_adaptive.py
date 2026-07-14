@@ -8,6 +8,7 @@ import pytest
 
 from slo_tracker.adaptive import (
     AdaptiveBurnRateEngine,
+    AlertDecision,
     Estimator,
     Severity,
     min_samples_for_burn,
@@ -125,3 +126,36 @@ class TestEstimatorParity:
         )
         decision = engine.evaluate(m)
         assert not decision.should_page
+
+
+class TestWarningTier:
+    def test_slow_sustained_burn_tickets_not_pages(self):
+        engine = AdaptiveBurnRateEngine(target=0.999)
+        # ~0.16% errors (1.6x burn) sustained with high traffic in every window.
+        # Too slow to trip the 14.4x or 6.0x page tiers, but the 3d/6h warning
+        # tier has plenty of data and confidently clears its 1.0x threshold.
+        m = measurement(
+            **{
+                "5m": (1498, 1500),
+                "30m": (8986, 9000),
+                "1h": (17971, 18000),
+                "6h": (99840, 100000),
+                "1d": (399360, 400000),
+                "3d": (499200, 500000),
+            }
+        )
+        decision = engine.evaluate(m)
+        assert decision.severity == Severity.WARNING
+        assert decision.should_ticket
+        assert not decision.should_page
+
+
+class TestDecisionProperties:
+    def test_page_and_ticket_map_to_severity(self):
+        crit = AlertDecision("s", "slo", Severity.CRITICAL, None, "r")
+        warn = AlertDecision("s", "slo", Severity.WARNING, None, "r")
+        none = AlertDecision("s", "slo", Severity.NONE, None, "r")
+
+        assert crit.should_page and not crit.should_ticket
+        assert warn.should_ticket and not warn.should_page
+        assert not none.should_page and not none.should_ticket
