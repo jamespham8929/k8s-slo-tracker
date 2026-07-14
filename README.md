@@ -130,13 +130,17 @@ python -m slo_tracker.cli generate-alerts --config config/slos.yaml --output ale
 ## Tests
 
 ```bash
-pip install pytest
-PYTHONPATH=. pytest tests/ -v
+pip install -e ".[dev]"
+pytest tests/ -v --cov=slo_tracker
 ```
 
 The tests in [`tests/test_adaptive.py`](tests/test_adaptive.py) encode the
 behavior that motivates the project: a single error on a sparse service must not
 page, and a sustained burn must.
+
+CI runs the suite on Python 3.10 through 3.12 with a 70% coverage floor, lints
+with ruff, and runs the false-page simulation as a smoke check so the benchmark
+cannot rot.
 
 ## Limitations
 

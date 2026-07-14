@@ -37,3 +37,15 @@ jobs:
           python-version: "3.11"
       - run: pip install ruff
       - run: ruff check slo_tracker/ tests/
+
+  benchmark:
+    name: Benchmark smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - name: Run the false-page simulation
+        run: python benchmarks/false_page_simulation.py --ticks 50 --rps 0.5 --seed 1
