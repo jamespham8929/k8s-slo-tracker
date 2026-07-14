@@ -6,3 +6,12 @@ __pycache__/
 venv/
 *.env
 generated_alerts/
+
+# Test and build artifacts
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+build/
+dist/
+.DS_Store
