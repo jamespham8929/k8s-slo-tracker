@@ -14,6 +14,7 @@ from .adaptive import AdaptiveBurnRateEngine, AlertDecision, Estimator
 from .measurement import MultiWindowMeasurement, WindowMeasurement
 from .models import SLODefinition
 from .prometheus_client import PrometheusClient
+from .query import render
 
 # Every window the ladder and its adaptive fallbacks can reference.
 REQUIRED_WINDOWS = ("5m", "30m", "1h", "6h", "1d", "3d")
@@ -60,5 +61,4 @@ class SLOEvaluator:
     def _count(self, query_template: str | None, window: str) -> float | None:
         if not query_template:
             return None
-        promql = query_template.replace("WINDOW", window)
-        return self._prom.query(promql)
+        return self._prom.query(render(query_template, window))
