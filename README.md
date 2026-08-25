@@ -82,8 +82,10 @@ Prometheus  ->  counts per window  ->  AdaptiveBurnRateEngine  ->  AlertDecision
 - [`slo_tracker/adaptive.py`](slo_tracker/adaptive.py) - the engine
 - [`slo_tracker/measurement.py`](slo_tracker/measurement.py) - count-based
   measurement types
-- [`slo_tracker/alert_generator.py`](slo_tracker/alert_generator.py) - emits
-  Prometheus recording and alerting rules
+- [`slo_tracker/alert_generator.py`](slo_tracker/alert_generator.py) - exports
+  the ladder as Prometheus rules and as a PrometheusRule manifest
+- [`slo_tracker/query.py`](slo_tracker/query.py) - the window substitution both
+  the evaluator and the generator go through
 - [`docs/adr/`](docs/adr/) - architecture decision records explaining the
   statistical choices
 
@@ -123,9 +125,63 @@ python -m slo_tracker.cli evaluate --config config/slos.yaml --estimator bayesia
 # Simple ratio-based status table (the naive view, kept for comparison)
 python -m slo_tracker.cli status --config config/slos.yaml --prometheus http://prometheus:9090
 
-# Generate Prometheus alert rules (thresholds derive from the same ladder)
-python -m slo_tracker.cli generate-alerts --config config/slos.yaml --output alerts.yaml
+# Put the thresholds in front of Prometheus itself
+slo-tracker generate-alerts --config config/slos.yaml | kubectl apply -f -
+
+# Or a plain rules file, for a rule_files entry or for promtool
+slo-tracker generate-alerts --config config/slos.yaml --format rules --output alerts.yaml
 ```
+
+## Getting the rules into Prometheus
+
+`generate-alerts` turns each SLO into recording rules and burn-rate alerts, using
+the same ladder the live engine uses, so the two cannot drift apart on
+thresholds or windows.
+
+```yaml
+- record: slo:sli_error:ratio_rate1h
+  expr: |
+    1 - (
+      sum(increase(http_requests_total{service="checkout-api",code=~"2.."}[1h]))
+      /
+      sum(increase(http_requests_total{service="checkout-api"}[1h]))
+    )
+  labels: {service: checkout-api, slo: availability, namespace: payments}
+
+- alert: SLOErrorBudgetBurnCritical
+  expr: |
+    (
+      slo:sli_error:ratio_rate1h{slo="availability", service="checkout-api"} > 0.0144
+      and
+      slo:sli_error:ratio_rate5m{slo="availability", service="checkout-api"} > 0.0144
+    )
+    or
+    (
+      slo:sli_error:ratio_rate6h{slo="availability", service="checkout-api"} > 0.006
+      and
+      slo:sli_error:ratio_rate30m{slo="availability", service="checkout-api"} > 0.006
+    )
+```
+
+Four things about that output are deliberate, and
+[ADR 0004](docs/adr/0004-exporting-rules-to-prometheus.md) covers why:
+
+- **The expressions come from your config, not from a metric name baked into the
+  generator.** A gRPC service gets rules that measure gRPC.
+- **Recording rules and the alerts that read them share a group.** Prometheus
+  runs groups concurrently and a group's rules in order, so splitting them leaves
+  every alert reading a stale evaluation.
+- **The default output is a PrometheusRule carrying a selector label.** The
+  operator ignores a manifest its `ruleSelector` does not match, which applies
+  cleanly, reports success, and then does nothing forever.
+- **The alert names match the rest of the platform's alerting**, so the same
+  routing, inhibition, and runbooks apply either way.
+
+What does not survive the export is the confidence gating. PromQL has no
+reasonable way to express a Wilson lower bound, so these rules behave like the
+textbook method: on a service doing six requests a minute, a single failed
+request will page. That is the whole reason `evaluate` exists, and it is why the
+export is a complement to it rather than a replacement.
 
 ## Tests
 
@@ -138,9 +194,11 @@ The tests in [`tests/test_adaptive.py`](tests/test_adaptive.py) encode the
 behavior that motivates the project: a single error on a sparse service must not
 page, and a sustained burn must.
 
-CI runs the suite on Python 3.10 through 3.12 with a 70% coverage floor, lints
+CI runs the suite on Python 3.10 through 3.12 with a 95% coverage floor, lints
 with ruff, and runs the false-page simulation as a smoke check so the benchmark
-cannot rot.
+cannot rot. A separate job generates rules from the shipped config and hands them
+to `promtool check rules` and the PrometheusRule to `kubeconform`, because "the
+generator produced YAML" and "Prometheus will load it" are different claims.
 
 ## Limitations
 
@@ -151,6 +209,11 @@ cannot rot.
   from sparse data anyway.
 - The Beta-Binomial prior is currently per-SLO, not learned from history. Learning
   a seasonal prior is future work (see [ADR 0003](docs/adr/0003-sparse-traffic-handling.md)).
+- Exported rules cannot do confidence gating, for the reason above. Running the
+  engine continuously, as a daemon rather than a command, is what would close
+  that gap.
+- Latency SLOs are carried in the config and evaluated nowhere. `generate-alerts`
+  reports them as skipped rather than emitting alerts that could never fire.
 
 ## License
 

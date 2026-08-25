@@ -25,7 +25,63 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -v --cov=slo_tracker --cov-report=term-missing --cov-fail-under=70
+        run: pytest tests/ -v --cov=slo_tracker --cov-report=term-missing --cov-fail-under=95
+
+  rules:
+    name: Generated rules
+    runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_VERSION: 2.53.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install promtool
+        run: |
+          curl -sSL -o prometheus.tar.gz \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          tar xzf prometheus.tar.gz
+          sudo install "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo install kubeconform /usr/local/bin/
+
+      - name: Install the package
+        run: pip install -e ".[dev]"
+
+      - name: Run the generator tests that need promtool
+        run: pytest tests/test_alert_generator.py -v
+
+      - name: Prometheus accepts the rules generated from the shipped config
+        run: |
+          # The generator can produce well-formed YAML that Prometheus refuses to
+          # load. Its own parser is the only authority on that.
+          slo-tracker generate-alerts --config config/slos.yaml --format rules \
+            --output /tmp/rules.yaml
+          promtool check rules /tmp/rules.yaml
+
+      - name: The operator would accept the PrometheusRule
+        run: |
+          slo-tracker generate-alerts --config config/slos.yaml --output /tmp/rule.yaml
+          kubeconform -strict -summary \
+            -kubernetes-version 1.29.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/rule.yaml
+
+      - name: The manifest carries a selector label
+        run: |
+          # A PrometheusRule the operator's ruleSelector does not match applies
+          # cleanly and is then ignored forever, which is the worst failure shape
+          # available: no error, no rules.
+          grep -q "release: kube-prometheus-stack" /tmp/rule.yaml \
+            || { echo "generated PrometheusRule has no selector label"; exit 1; }
 
   lint:
     name: Lint
