@@ -164,6 +164,17 @@ class AlertRuleGenerator:
         }
         return _dump(manifest)
 
+    @staticmethod
+    def _identity_labels(slo: SLODefinition) -> dict[str, str]:
+        labels = {
+            "service": slo.service,
+            "slo": slo.name,
+            "namespace": slo.namespace,
+        }
+        if slo.team:
+            labels["team"] = slo.team
+        return labels
+
     def _recording_rules(self, slo: SLODefinition) -> list[dict]:
         identity = f"{slo.service}/{slo.name}"
         good = validate(slo.good_query, "good_query", identity)
@@ -184,11 +195,7 @@ class AlertRuleGenerator:
             rules.append({
                 "record": f"slo:sli_error:ratio_rate{window}",
                 "expr": expr,
-                "labels": {
-                    "service": slo.service,
-                    "slo": slo.name,
-                    "namespace": slo.namespace,
-                },
+                "labels": self._identity_labels(slo),
             })
         return rules
 
@@ -205,12 +212,7 @@ class AlertRuleGenerator:
                 "alert": alert_name,
                 "expr": self._burn_expr(slo, tiers),
                 "for": wait,
-                "labels": {
-                    "severity": severity,
-                    "service": slo.service,
-                    "slo": slo.name,
-                    "namespace": slo.namespace,
-                },
+                "labels": {"severity": severity, **self._identity_labels(slo)},
                 "annotations": self._annotations(slo, tiers, severity),
             })
         return rules

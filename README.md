@@ -97,6 +97,7 @@ Define SLOs in YAML (see [`config/slos.yaml`](config/slos.yaml)):
 services:
   - name: checkout-api
     namespace: payments
+    team: payments
     slos:
       - name: availability
         type: availability
@@ -146,7 +147,7 @@ thresholds or windows.
       /
       sum(increase(http_requests_total{service="checkout-api"}[1h]))
     )
-  labels: {service: checkout-api, slo: availability, namespace: payments}
+  labels: {service: checkout-api, slo: availability, namespace: payments, team: payments}
 
 - alert: SLOErrorBudgetBurnCritical
   expr: |
@@ -175,7 +176,9 @@ Four things about that output are deliberate, and
   operator ignores a manifest its `ruleSelector` does not match, which applies
   cleanly, reports success, and then does nothing forever.
 - **The alert names match the rest of the platform's alerting**, so the same
-  routing, inhibition, and runbooks apply either way.
+  routing, inhibition, and runbooks apply either way, and every alert carries the
+  owning `team` label Alertmanager routes on. An alert without one reaches
+  whatever catch-all receiver exists, which is nobody's pager.
 
 What does not survive the export is the confidence gating. PromQL has no
 reasonable way to express a Wilson lower bound, so these rules behave like the

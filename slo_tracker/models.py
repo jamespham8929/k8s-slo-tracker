@@ -19,6 +19,10 @@ class SLODefinition:
     slo_type: SLOType
     target: float  # 0.0 - 1.0, e.g. 0.999 for 99.9%
     window_days: int
+    # Owning team. It ends up as a label on every generated alert, which is what
+    # Alertmanager routes on. Without it an alert reaches whatever catch-all
+    # receiver exists, which is nobody's pager.
+    team: str | None = None
     good_query: str | None = None
     total_query: str | None = None
     latency_query: str | None = None

@@ -39,6 +39,7 @@ def load_config(path: str) -> list[ServiceSLOConfig]:
                 slo_type=SLOType(s["type"]),
                 target=s["target"],
                 window_days=_parse_window(s.get("window", "30d")),
+                team=s.get("team", svc.get("team")),
                 good_query=s.get("good_query"),
                 total_query=s.get("total_query"),
                 latency_query=s.get("query"),

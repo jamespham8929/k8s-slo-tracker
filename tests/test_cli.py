@@ -27,6 +27,7 @@ CONFIG = """
 services:
   - name: checkout-api
     namespace: payments
+    team: payments
     slos:
       - name: availability
         type: availability
@@ -80,6 +81,7 @@ class TestLoadConfig:
         slo = configs[0].slos[0]
         assert slo.service == "checkout-api"
         assert slo.namespace == "payments"
+        assert slo.team == "payments"
         assert slo.target == 0.999
         assert slo.window_days == 30
         assert "WINDOW" in slo.good_query
@@ -89,6 +91,10 @@ class TestLoadConfig:
             path = tmp_path / f"{window}.yaml"
             path.write_text(CONFIG.replace("window: 30d", f"window: {window}"))
             assert load_config(str(path))[0].slos[0].window_days == days
+
+    def test_slo_level_team_overrides_the_service_team(self, tmp_path):
+        body = CONFIG.replace("        window: 30d", "        window: 30d\n        team: sre")
+        assert load_config(write_config(tmp_path, body))[0].slos[0].team == "sre"
 
     def test_empty_config(self, tmp_path):
         path = tmp_path / "empty.yaml"

@@ -23,7 +23,9 @@ from slo_tracker.alert_generator import (
 from slo_tracker.models import SLODefinition, SLOType
 
 
-def make_availability_slo(service="my-service", target=0.999, metric="http_requests_total"):
+def make_availability_slo(
+    service="my-service", target=0.999, metric="http_requests_total", team="platform"
+):
     return SLODefinition(
         name="availability",
         service=service,
@@ -31,6 +33,7 @@ def make_availability_slo(service="my-service", target=0.999, metric="http_reque
         slo_type=SLOType.AVAILABILITY,
         target=target,
         window_days=30,
+        team=team,
         good_query=f'sum(increase({metric}{{service="{service}",code=~"2.."}}[WINDOW]))',
         total_query=f'sum(increase({metric}{{service="{service}"}}[WINDOW]))',
     )
@@ -114,6 +117,7 @@ class TestRecordingRules:
                 "service": "payment-api",
                 "slo": "availability",
                 "namespace": "production",
+                "team": "platform",
             }
 
     def test_recording_rules_precede_the_alerts_that_read_them(self):
@@ -135,6 +139,20 @@ class TestAlertRules:
         names = [r["alert"] for r in alerts]
         assert names == [CRITICAL_ALERT, WARNING_ALERT]
         assert len(set(names)) == len(names)
+
+    def test_alerts_carry_the_owning_team(self):
+        # Alertmanager routes on this label. Without it an alert reaches whatever
+        # catch-all receiver exists, which is nobody's pager.
+        rules = rules_of(AlertRuleGenerator().generate([make_availability_slo(team="payments")]))
+        for rule in (r for r in rules if "alert" in r):
+            assert rule["labels"]["team"] == "payments"
+
+    def test_an_slo_with_no_team_omits_the_label(self):
+        # An empty team label routes no better than a missing one and reads as
+        # deliberate, so leave it off entirely.
+        rules = rules_of(AlertRuleGenerator().generate([make_availability_slo(team=None)]))
+        for rule in (r for r in rules if "alert" in r):
+            assert "team" not in rule["labels"]
 
     def test_severity_labels_match_the_ladder(self):
         rules = rules_of(AlertRuleGenerator().generate([make_availability_slo()]))
