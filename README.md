@@ -183,8 +183,34 @@ Four things about that output are deliberate, and
 What does not survive the export is the confidence gating. PromQL has no
 reasonable way to express a Wilson lower bound, so these rules behave like the
 textbook method: on a service doing six requests a minute, a single failed
-request will page. That is the whole reason `evaluate` exists, and it is why the
-export is a complement to it rather than a replacement.
+request will page.
+
+### Keeping the gating with the daemon
+
+`slo-tracker serve` closes that gap. It runs the gated engine every minute and
+serves each decision on `:9105/metrics`. `generate-alerts --engine gated` then
+writes alerts that only read the decision, under the same names and labels as
+the static rules, so routing and runbooks stay the same.
+
+```bash
+slo-tracker serve --config config/slos.yaml --prometheus http://prometheus:9090
+slo-tracker generate-alerts --config config/slos.yaml --engine gated | kubectl apply -f -
+```
+
+```yaml
+- alert: SLOErrorBudgetBurnCritical
+  expr: |
+    max without (instance, pod, job)
+      (slo_tracker_alert_state{service="checkout-api", slo="availability", severity="critical"}) == 1
+  for: 1m
+```
+
+A failed evaluation keeps the last decision, so a slow Prometheus during an
+incident cannot resolve a real page. A daemon that stops evaluating fires
+`SLOTrackerStale`, because while it is down no gated alert can page. The
+[Dockerfile](Dockerfile) and [deploy/daemon.yaml](deploy/daemon.yaml) run it
+next to kube-prometheus-stack. See
+[ADR 0005](docs/adr/0005-a-daemon-for-gated-alerts.md).
 
 ## Tests
 
@@ -197,7 +223,7 @@ The tests in [`tests/test_adaptive.py`](tests/test_adaptive.py) encode the
 behavior that motivates the project: a single error on a sparse service must not
 page, and a sustained burn must.
 
-CI runs the suite on Python 3.10 through 3.12 with a 95% coverage floor, lints
+CI runs the suite on Python 3.10 through 3.13 with a 95% coverage floor, lints
 with ruff, and runs the false-page simulation as a smoke check so the benchmark
 cannot rot. A separate job generates rules from the shipped config and hands them
 to `promtool check rules` and the PrometheusRule to `kubeconform`, because "the
@@ -212,9 +238,8 @@ generator produced YAML" and "Prometheus will load it" are different claims.
   from sparse data anyway.
 - The Beta-Binomial prior is currently per-SLO, not learned from history. Learning
   a seasonal prior is future work (see [ADR 0003](docs/adr/0003-sparse-traffic-handling.md)).
-- Exported rules cannot do confidence gating, for the reason above. Running the
-  engine continuously, as a daemon rather than a command, is what would close
-  that gap.
+- Static exported rules cannot do confidence gating. The gated engine keeps it,
+  at the cost of one more process to run and watch.
 - Latency SLOs are carried in the config and evaluated nowhere. `generate-alerts`
   reports them as skipped rather than emitting alerts that could never fire.
 

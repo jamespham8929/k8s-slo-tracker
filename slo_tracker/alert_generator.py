@@ -104,15 +104,29 @@ def partition_supported(
     return supported, unsupported
 
 
+# Rule engines. "static" computes burn rates in PromQL from the raw counters.
+# "gated" reads the decision `slo-tracker serve` already made with confidence
+# gating, so Prometheus only routes it.
+ENGINES = ("static", "gated")
+
+# How stale the daemon's last evaluation may get before its decisions stop
+# being trusted. Several missed cycles at the default 60s interval.
+GATED_STALE_SECONDS = 600
+
+
 class AlertRuleGenerator:
     def __init__(
         self,
         ladder: tuple[BurnWindow, ...] = DEFAULT_LADDER,
         runbook_base_url: str = DEFAULT_RUNBOOK_BASE,
+        engine: str = "static",
     ):
+        if engine not in ENGINES:
+            raise ValueError(f"engine must be one of {ENGINES}, got {engine!r}")
         self._ladder = ladder
         self._runbook_base_url = runbook_base_url.rstrip("/")
         self._windows = ladder_windows(ladder)
+        self._engine = engine
 
     def rule_groups(self, slos: list[SLODefinition]) -> list[dict]:
         """Build one rule group per SLO.
@@ -129,10 +143,13 @@ class AlertRuleGenerator:
                     f"{slo.service}/{slo.name}: cannot generate rules for a "
                     f"{slo.slo_type.value} SLO"
                 )
-            groups.append({
-                "name": f"slo.{slo.service}.{slo.name}",
-                "rules": self._recording_rules(slo) + self._alert_rules(slo),
-            })
+            if self._engine == "gated":
+                rules = self._gated_alert_rules(slo)
+            else:
+                rules = self._recording_rules(slo) + self._alert_rules(slo)
+            groups.append({"name": f"slo.{slo.service}.{slo.name}", "rules": rules})
+        if self._engine == "gated" and slos:
+            groups.append(self._gated_health_group(slos))
         return groups
 
     def generate(self, slos: list[SLODefinition]) -> str:
@@ -216,6 +233,94 @@ class AlertRuleGenerator:
                 "annotations": self._annotations(slo, tiers, severity),
             })
         return rules
+
+    def _gated_alert_rules(self, slo: SLODefinition) -> list[dict]:
+        """Alerts that read the daemon's decision instead of recomputing it.
+
+        The engine has already waited for enough evidence before choosing a
+        severity, so `for` is short. It only absorbs one flapping cycle.
+        """
+        rules = []
+        for severity, alert_name, wait in (
+            ("critical", CRITICAL_ALERT, "1m"),
+            ("warning", WARNING_ALERT, "5m"),
+        ):
+            tiers = [tier for tier in self._ladder if tier.severity.value == severity]
+            if not tiers:
+                continue
+            selector = (
+                f'{{service="{slo.service}", slo="{slo.name}", severity="{severity}"}}'
+            )
+            annotations = self._annotations(slo, tiers, severity)
+            pairs = ", ".join(f"{t.burn_rate}x over {t.long_window}" for t in tiers)
+            annotations["description"] = (
+                f"The lower confidence bound of {slo.service}/{slo.name}'s burn "
+                f"rate is above {pairs}. slo_tracker_burn_rate_lower_bound "
+                "shows the evidence per window."
+            )
+            rules.append({
+                "alert": alert_name,
+                "expr": (
+                    "max without (instance, pod, job) "
+                    f"(slo_tracker_alert_state{selector}) == 1"
+                ),
+                "for": wait,
+                "labels": {"severity": severity, "engine": "gated", **self._identity_labels(slo)},
+                "annotations": annotations,
+            })
+        return rules
+
+    def _gated_health_group(self, slos: list[SLODefinition]) -> dict:
+        """Alerts on the daemon itself.
+
+        With gated rules, a daemon that stops evaluating means no SLO can page.
+        That has to be loud on its own.
+        """
+        names = "|".join(sorted({slo.service for slo in slos}))
+        return {
+            "name": "slo-tracker.daemon",
+            "rules": [
+                {
+                    "alert": "SLOTrackerStale",
+                    "expr": (
+                        "time() - max by (service, slo) "
+                        f'(slo_tracker_last_evaluation_timestamp_seconds{{service=~"{names}"}})'
+                        f" > {GATED_STALE_SECONDS}"
+                        "\nor\n"
+                        "absent(slo_tracker_last_evaluation_timestamp_seconds)"
+                    ),
+                    "for": "5m",
+                    "labels": {"severity": "critical"},
+                    "annotations": {
+                        "summary": "slo-tracker has stopped evaluating SLOs",
+                        "description": (
+                            "No successful evaluation for over "
+                            f"{GATED_STALE_SECONDS // 60} minutes. While this "
+                            "fires, the gated SLO alerts cannot page."
+                        ),
+                        "runbook_url": f"{self._runbook_base_url}/slo-tracker",
+                    },
+                },
+                {
+                    "alert": "SLOTrackerEvaluationErrors",
+                    "expr": "increase(slo_tracker_evaluation_errors_total[15m]) > 0",
+                    "for": "15m",
+                    "labels": {"severity": "warning"},
+                    "annotations": {
+                        "summary": (
+                            "slo-tracker cannot evaluate "
+                            "{{ $labels.service }}/{{ $labels.slo }}"
+                        ),
+                        "description": (
+                            "Evaluations keep failing, usually because a query "
+                            "errors or Prometheus does not answer. The last "
+                            "decision stays in place until one succeeds."
+                        ),
+                        "runbook_url": f"{self._runbook_base_url}/slo-tracker",
+                    },
+                },
+            ],
+        }
 
     def _burn_expr(self, slo: SLODefinition, tiers: list[BurnWindow]) -> str:
         """One expression per severity, its tiers joined by `or`.

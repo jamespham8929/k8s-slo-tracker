@@ -321,3 +321,43 @@ class TestPromtoolAccepts:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "SUCCESS" in result.stdout
+
+
+class TestGatedEngine:
+    def test_alerts_read_the_daemon_decision(self):
+        gen = AlertRuleGenerator(engine="gated")
+        rules = rules_of(gen.generate([make_availability_slo()]))
+
+        assert [r["alert"] for r in rules] == [CRITICAL_ALERT, WARNING_ALERT]
+        assert all("record" not in r for r in rules)
+        critical = rules[0]
+        assert 'slo_tracker_alert_state{service="my-service", slo="availability", ' \
+               'severity="critical"}' in critical["expr"]
+        assert critical["labels"]["engine"] == "gated"
+        assert critical["labels"]["team"] == "platform"
+
+    def test_adds_health_alerts_for_the_daemon(self):
+        gen = AlertRuleGenerator(engine="gated")
+        groups = yaml.safe_load(gen.generate([make_availability_slo()]))["groups"]
+        health = groups[-1]
+        assert health["name"] == "slo-tracker.daemon"
+        assert {r["alert"] for r in health["rules"]} == {
+            "SLOTrackerStale", "SLOTrackerEvaluationErrors",
+        }
+        stale = next(r for r in health["rules"] if r["alert"] == "SLOTrackerStale")
+        assert "absent(slo_tracker_last_evaluation_timestamp_seconds)" in stale["expr"]
+
+    def test_rejects_an_unknown_engine(self):
+        with pytest.raises(ValueError):
+            AlertRuleGenerator(engine="magic")
+
+    @pytest.mark.skipif(shutil.which("promtool") is None, reason="promtool not installed")
+    def test_gated_rules_pass_promtool(self, tmp_path):
+        path = tmp_path / "gated.yaml"
+        path.write_text(
+            AlertRuleGenerator(engine="gated").generate([make_availability_slo()])
+        )
+        result = subprocess.run(
+            ["promtool", "check", "rules", str(path)], capture_output=True, text=True
+        )
+        assert result.returncode == 0, result.stdout + result.stderr

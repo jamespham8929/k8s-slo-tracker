@@ -253,3 +253,59 @@ class TestWatch:
 
         result = CliRunner().invoke(cli, ["watch", "--config", write_config(tmp_path)])
         assert "prometheus unreachable" in result.output
+
+
+class TestGatedGeneration:
+    def test_engine_flag_switches_to_gated_rules(self, tmp_path):
+        result = CliRunner().invoke(cli, [
+            "generate-alerts", "--config", write_config(tmp_path),
+            "--format", "rules", "--engine", "gated",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "slo_tracker_alert_state" in result.output
+        assert "slo:sli_error:ratio_rate" not in result.output
+
+
+class TestServe:
+    def test_starts_the_server_and_loops(self, tmp_path, monkeypatch):
+        calls = {}
+        monkeypatch.setattr(cli_module, "PrometheusClient", FakePrometheus)
+        monkeypatch.setattr(
+            cli_module, "start_metrics_server",
+            lambda exporter, port: calls.setdefault("port", port),
+        )
+
+        def fake_loop(evaluator, slos, exporter, interval, stop):
+            calls["slos"] = [s.name for s in slos]
+            calls["interval"] = interval
+
+        monkeypatch.setattr(cli_module, "serve_forever", fake_loop)
+        # Keep pytest's own Ctrl-C handling.
+        monkeypatch.setattr(cli_module.signal, "signal", lambda *_: None)
+        result = CliRunner().invoke(cli, [
+            "serve", "--config", write_config(tmp_path, CONFIG_WITH_LATENCY),
+            "--port", "9200", "--interval", "30",
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert calls == {"port": 9200, "slos": ["availability"], "interval": 30}
+        assert "skipping" in result.output  # the latency SLO
+
+    def test_refuses_a_config_with_nothing_to_evaluate(self, tmp_path, monkeypatch):
+        latency_only = """
+services:
+  - name: checkout-api
+    namespace: payments
+    slos:
+      - name: latency
+        type: latency
+        target: 0.99
+        query: histogram_quantile(0.99, checkout)
+        threshold_ms: 300
+"""
+        monkeypatch.setattr(cli_module, "start_metrics_server", lambda *_: None)
+        result = CliRunner().invoke(
+            cli, ["serve", "--config", write_config(tmp_path, latency_only)]
+        )
+        assert result.exit_code != 0
+        assert "no SLOs" in result.output

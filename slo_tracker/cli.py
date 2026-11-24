@@ -1,5 +1,8 @@
 """CLI entry point for k8s-slo-tracker."""
 
+import logging
+import signal
+import threading
 import time
 
 import click
@@ -10,6 +13,7 @@ from rich.table import Table
 from .adaptive import Estimator
 from .alert_generator import AlertRuleGenerator, partition_supported
 from .calculator import ErrorBudgetCalculator
+from .daemon import DecisionExporter, serve_forever, start_metrics_server
 from .evaluator import SLOEvaluator
 from .models import ServiceSLOConfig, SLODefinition, SLOType
 from .prometheus_client import PrometheusClient
@@ -183,7 +187,15 @@ def evaluate(config, prometheus, confidence, estimator):
          "ignores a manifest its ruleSelector does not match.",
 )
 @click.option("--runbook-base", default=None, help="Base URL for runbook_url annotations")
-def generate_alerts(config, output, output_format, name, namespace, labels, runbook_base):
+@click.option(
+    "--engine",
+    type=click.Choice(["static", "gated"]),
+    default="static",
+    show_default=True,
+    help="static computes burn rates in PromQL. gated alerts on the decisions "
+         "`slo-tracker serve` exports, so paging keeps the confidence gating.",
+)
+def generate_alerts(config, output, output_format, name, namespace, labels, runbook_base, engine):
     """Generate Prometheus recording and alerting rules from SLO definitions.
 
     The thresholds and windows come from the same ladder the live engine uses, so
@@ -201,7 +213,7 @@ def generate_alerts(config, output, output_format, name, namespace, labels, runb
     if not supported:
         raise click.ClickException("no SLOs in the config can be turned into rules")
 
-    kwargs = {}
+    kwargs = {"engine": engine}
     if runbook_base:
         kwargs["runbook_base_url"] = runbook_base
     gen = AlertRuleGenerator(**kwargs)
@@ -231,6 +243,47 @@ def _parse_labels(pairs: tuple[str, ...]) -> dict[str, str]:
             raise click.BadParameter(f"expected key=value, got {pair!r}", param_hint="--label")
         labels[key.strip()] = value.strip()
     return labels
+
+
+@cli.command()
+@click.option("--config", required=True, help="Path to SLO config YAML")
+@click.option("--prometheus", default="http://localhost:9090", show_default=True)
+@click.option("--interval", default=60, show_default=True, help="Seconds between evaluations")
+@click.option("--port", default=9105, show_default=True, help="Port for /metrics")
+@click.option(
+    "--confidence", default=0.95, show_default=True, help="Confidence level for burn-rate gating"
+)
+@click.option("--estimator", default="wilson", type=click.Choice(["wilson", "bayesian"]))
+def serve(config, prometheus, interval, port, confidence, estimator):
+    """Evaluate every SLO on an interval and export the decisions as metrics.
+
+    Pair it with `generate-alerts --engine gated`, so the alerts Prometheus
+    fires keep the confidence gating that plain PromQL rules cannot do.
+    """
+    slos = [slo for svc in load_config(config) for slo in svc.slos]
+    supported, unsupported = partition_supported(slos)
+    for item in unsupported:
+        console.print(
+            f"[yellow]skipping {item.slo.service}/{item.slo.name}: {item.reason}[/yellow]",
+            highlight=False,
+        )
+    if not supported:
+        raise click.ClickException("no SLOs in the config can be evaluated")
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    evaluator = SLOEvaluator(
+        PrometheusClient(prometheus), confidence=confidence, estimator=Estimator(estimator)
+    )
+    exporter = DecisionExporter()
+    start_metrics_server(exporter, port)
+    console.print(
+        f"Serving /metrics on :{port}, evaluating {len(supported)} SLO(s) every {interval}s"
+    )
+
+    stop = threading.Event()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda *_: stop.set())
+    serve_forever(evaluator, supported, exporter, interval, stop)
 
 
 @cli.command()

@@ -6,18 +6,21 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -33,8 +36,8 @@ jobs:
     env:
       PROMETHEUS_VERSION: 2.53.0
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -75,6 +78,20 @@ jobs:
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             /tmp/rule.yaml
 
+      - name: Prometheus accepts the gated rules
+        run: |
+          slo-tracker generate-alerts --config config/slos.yaml --format rules \
+            --engine gated --output /tmp/gated.yaml
+          promtool check rules /tmp/gated.yaml
+
+      - name: The daemon manifests are valid
+        run: |
+          kubeconform -strict -summary \
+            -kubernetes-version 1.29.0 \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            deploy/daemon.yaml
+
       - name: The manifest carries a selector label
         run: |
           # A PrometheusRule the operator's ruleSelector does not match applies
@@ -87,21 +104,31 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - run: pip install ruff
+      - run: pip install ruff==0.16.1
       - run: ruff check slo_tracker/ tests/
 
   benchmark:
     name: Benchmark smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - run: pip install -e .
       - name: Run the false-page simulation
         run: python benchmarks/false_page_simulation.py --ticks 50 --rps 0.5 --seed 1
+
+  image:
+    name: Daemon image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the image and run its CLI
+        run: |
+          docker build -t slo-tracker:ci .
+          docker run --rm --entrypoint slo-tracker slo-tracker:ci serve --help
